@@ -2,31 +2,30 @@ import os
 import ccxt
 import sys
 
-# 1. API Anahtarlarını GitHub Secrets'tan Çek
+# 1. API Anahtarları
 api_key = os.environ.get('TRBINANCE_API_KEY')
 api_secret = os.environ.get('TRBINANCE_API_SECRET')
 
-# 2. Binance TR Özel Bağlantısı (En Güncel ve Hatasız Yöntem)
+# 2. Bağlantı - Burası en kritik yer
 try:
-    # Ana binance sınıfını kullanıyoruz
-    exchange = ccxt.binance({
+    # 'trbinance' sınıfını doğrudan kullanıyoruz
+    exchange = ccxt.trbinance({
         'apiKey': api_key,
         'secret': api_secret,
         'enableRateLimit': True,
-        # ÖNEMLİ: Hostname'i doğrudan Binance TR'ye yönlendiriyoruz
-        'urls': {
-            'api': {
-                'public': 'https://api.trbinance.com/api',
-                'private': 'https://api.trbinance.com/api',
-            },
-        },
     })
+    
+    # Borsa API adresini manuel olarak trbinance'e zorla
+    exchange.urls['api'] = {
+        'public': 'https://api.trbinance.com/api',
+        'private': 'https://api.trbinance.com/api',
+    }
 
-    # 3. Bakiye Kontrolü ile Bağlantıyı Doğrula
+    # 3. Test
     balance = exchange.fetch_balance()
     print("--- BAĞLANTI BAŞARILI ---")
-    print(f"Toplam Bakiye: {balance['total']}")
+    print("Bakiye özeti alındı.")
 
 except Exception as e:
-    print(f"Borsa bağlantı hatası: {e}")
+    print(f"HATA: {e}")
     sys.exit(1)
