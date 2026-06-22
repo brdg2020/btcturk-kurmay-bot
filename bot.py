@@ -12,7 +12,7 @@ if not api_key or not api_secret:
 
 # 2. Binance TR Bağlantısı
 try:
-    exchange = ccxt.trbinance({
+    exchange = ccxt.binancetr({
         'apiKey': api_key,
         'secret': api_secret,
         'enableRateLimit': True,
