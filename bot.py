@@ -1,42 +1,47 @@
+import hashlib
+import hmac
 import os
 import time
-import base64
-import hmac
-import hashlib
+from urllib.parse import urlencode
 import requests
 
 API_KEY = os.getenv("469F5Db75044C5cA6094506d53E8E51CVc4lSDlluRn9wdXH0TGIoz3uzwFFezs1", "").strip()
 API_SECRET = os.getenv("87E3993Ebd105C89B374E5A753E1413AOKhEUFHa9ZZPOiJJ9IRu1Smii7S4Bxyl", "").strip()
-BASE_URL = "https://api.btcturk.com"
+BASE_URL = "https://api.trbinance.com"
 
-def get_auth_headers():
-    stamp = str(int(time.time() * 1000))
-    message = f"{API_KEY}{stamp}".encode("utf-8")
-    secret_bytes = base64.b64decode(API_SECRET)
-    signature_bytes = hmac.new(secret_bytes, message, hashlib.sha256).digest()
-    signature = base64.b64encode(signature_bytes).decode("utf-8")
-    return {
-        "X-PCK": API_KEY,
-        "X-Stamp": stamp,
-        "X-Signature": signature,
-        "Content-Type": "application/json"
-    }
 
 def bakiye_kontrol():
-    print("=== BTCTURK GÜNLÜK KURMAY BOT DEVREDE ===")
-    try:
-        res = requests.get(BASE_URL + "/api/v1/users/balances", headers=get_auth_headers(), timeout=10)
-        res.raise_for_status()
-        data = res.json()
-        print("\n[KASA DURUMU]:")
-        for item in data["data"]:
-            if float(item["balance"]) > 0:
-                print(f" -> {item['asset']}: Toplam {item['balance']} | Boşta: {item['free']}")
-        print("\n🚀 Microsoft GitHub Köprüsü Başarıyla Kuruldu!")
-    except Exception as e:
-        print(f"\n❌ Borsa Bağlantı Hatası: {e}")
-        if 'res' in locals():
-            print(f"Borsa Yanıtı: {res.text}")
+  print("=== BINANCE TR GÜNLÜK KURMAY BOT DEVREDE ===")
+  if not API_KEY or not API_SECRET:
+    print("❌ HATA: TRBINANCE_API_KEY veya TRBINANCE_API_SECRET bulunamadı!")
+    return
+
+  endpoint = "/api/v3/account"
+  params = {"timestamp": int(time.time() * 1000)}
+  query_string = urlencode(params)
+  signature = hmac.new(
+      API_SECRET.encode("utf-8"), query_string.encode("utf-8"), hashlib.sha256
+  ).hexdigest()
+
+  url = f"{BASE_URL}{endpoint}?{query_string}&signature={signature}"
+  headers = {"X-MBX-APIKEY": API_KEY}
+
+  try:
+    res = requests.get(url, headers=headers, timeout=10)
+    res.raise_for_status()
+    data = res.json()
+    print("\n[KASA DURUMU]:")
+    for item in data.get("balances", []):
+      free = float(item["free"])
+      locked = float(item["locked"])
+      if free > 0 or locked > 0:
+        print(f" -> {item['asset']}: Boşta: {free} | Kilitli: {locked}")
+    print("\n🚀 Microsoft GitHub Köprüsü Binance TR İçin Başarıyla Kuruldu!")
+  except Exception as e:
+    print(f"\n❌ Borsa Bağlantı Hatası: {e}")
+    if "res" in locals():
+      print(f"Borsa Yanıtı: {res.text}")
+
 
 if __name__ == "__main__":
-    bakiye_kontrol()
+  bakiye_kontrol()
