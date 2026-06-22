@@ -1,0 +1,31 @@
+name: Binance TR Otonom Kurmay Bot
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '5 0 * * *'
+
+jobs:
+  trade-run:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Kod Deposunu Klonla
+      uses: actions/checkout@v4
+
+    - name: Python 3.10 Kurulumu
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Gerekli Kütüphaneleri Yükle
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests
+
+    - name: Botu Ateşle
+      env:
+        TRBINANCE_API_KEY: ${{ secrets.469F5Db75044C5cA6094506d53E8E51CVc4lSDlluRn9wdXH0TGIoz3uzwFFezs1 }}
+        TRBINANCE_API_SECRET: ${{ secrets.87E3993Ebd105C89B374E5A753E1413AOKhEUFHa9ZZPOiJJ9IRu1Smii7S4Bxyl }}
+      run: |
+        python bot.py
