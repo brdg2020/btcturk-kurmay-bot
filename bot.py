@@ -1,39 +1,34 @@
 import os
-import ccxt
-import sys
+from binance.spot import Spot
 
-# API Anahtarlarını Al
+# GitHub Secrets'tan gelen verileri oku
 api_key = os.environ.get("TRBINANCE_API_KEY")
-api_secret = os.environ.get("TRBINANCE_API_SECRET")
+secret_key = os.environ.get("TRBINANCE_API_SECRET")
 
-if not api_key or not api_secret:
-    print("HATA: API anahtarları GitHub Secrets'ta tanımlı değil!")
-    sys.exit(1)
+# Binance TR için resmi connector
+# Not: base_url'i 'https://api.trbinance.com' olarak tanımlıyoruz
+client = Spot(
+    api_key=api_key, 
+    api_secret=secret_key, 
+    base_url="https://api.trbinance.com"
+)
 
 try:
-    # Binance Global sınıfını kullanarak Binance TR adresine yönlendirme
-    exchange = ccxt.binance({
-        'apiKey': api_key,
-        'secret': api_secret,
-        'enableRateLimit': True,
-    })
+    print("--- BAĞLANTI DENENİYOR ---")
     
-    # Binance TR API adreslerini manuel set et (En kesin çözüm)
-    exchange.urls['api'] = {
-        'public': 'https://api.trbinance.com/api',
-        'private': 'https://api.trbinance.com/api',
-    }
-
-    # Bağlantıyı kontrol et
-    balance = exchange.fetch_balance()
+    # 1. Fiyat Bilgisi
+    ticker = client.ticker_price("BTCTRY")
+    print(f"BTC/TRY Fiyatı: {ticker['price']}")
+    
+    # 2. Bakiye Bilgisi
+    account_details = client.account()
+    balances = account_details.get('balances', [])
+    
     print("--- BAĞLANTI BAŞARILI ---")
-    
-    # Bakiye Özeti
-    total = balance.get('total', {})
-    for coin, amount in total.items():
-        if float(amount) > 0:
-            print(f"{coin}: {amount}")
+    print("Bakiye Özeti:")
+    for asset in balances:
+        if float(asset['free']) > 0 or float(asset['locked']) > 0:
+            print(f"{asset['asset']}: {asset['free']} (Kilitli: {asset['locked']})")
 
 except Exception as e:
     print(f"HATA: {e}")
-    sys.exit(1)
