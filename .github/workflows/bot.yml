@@ -22,18 +22,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests
 
-      - name: Ortamı Kontrol Et
-        env:
-          TRBINANCE_API_KEY: ${{ secrets.TRBINANCE_API_KEY }}
-          TRBINANCE_API_SECRET: ${{ secrets.TRBINANCE_API_SECRET }}
-        run: |
-          echo "Python version:"
-          python --version
-          echo "API KEY var mı?"
-          if [ -n "$TRBINANCE_API_KEY" ]; then echo "EVET"; else echo "HAYIR"; fi
-          echo "API SECRET var mı?"
-          if [ -n "$TRBINANCE_API_SECRET" ]; then echo "EVET"; else echo "HAYIR"; fi
-
       - name: Botu Ateşle
         env:
           TRBINANCE_API_KEY: ${{ secrets.TRBINANCE_API_KEY }}
