@@ -2,31 +2,41 @@ name: Binance TR Otonom Kurmay Bot
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '5 0 * * *'
 
 jobs:
   trade-run:
     runs-on: ubuntu-latest
+    timeout-minutes: 3
 
     steps:
-    - name: Kod Deposunu Klonla
-      uses: actions/checkout@v4
+      - name: Kod Deposunu Klonla
+        uses: actions/checkout@v4
 
-    - name: Python 3.10 Kurulumu
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
+      - name: Python 3.10 Kurulumu
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
 
-    - name: Gerekli Kütüphaneleri Yükle
-      run: |
-        python -m pip install --upgrade pip
-        pip install binance-connector
-        pip install requests
+      - name: Gerekli Kütüphaneleri Yükle
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
 
-    - name: Botu Ateşle
-      env:
-        TRBINANCE_API_KEY: ${{ secrets.TRBINANCE_API_KEY }}
-        TRBINANCE_API_SECRET: ${{ secrets.TRBINANCE_API_SECRET }}
-      run: |
-        python bot.py
+      - name: Ortamı Kontrol Et
+        env:
+          TRBINANCE_API_KEY: ${{ secrets.TRBINANCE_API_KEY }}
+          TRBINANCE_API_SECRET: ${{ secrets.TRBINANCE_API_SECRET }}
+        run: |
+          echo "Python version:"
+          python --version
+          echo "API KEY var mı?"
+          if [ -n "$TRBINANCE_API_KEY" ]; then echo "EVET"; else echo "HAYIR"; fi
+          echo "API SECRET var mı?"
+          if [ -n "$TRBINANCE_API_SECRET" ]; then echo "EVET"; else echo "HAYIR"; fi
+
+      - name: Botu Ateşle
+        env:
+          TRBINANCE_API_KEY: ${{ secrets.TRBINANCE_API_KEY }}
+          TRBINANCE_API_SECRET: ${{ secrets.TRBINANCE_API_SECRET }}
+        run: |
+          python -u bot.py
