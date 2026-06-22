@@ -25,7 +25,7 @@ jobs:
 
     - name: Botu Ateşle
       env:
-        TRBINANCE_API_KEY: ${{ secrets.469F5Db75044C5cA6094506d53E8E51CVc4lSDlluRn9wdXH0TGIoz3uzwFFezs1 }}
-        TRBINANCE_API_SECRET: ${{ secrets.87E3993Ebd105C89B374E5A753E1413AOKhEUFHa9ZZPOiJJ9IRu1Smii7S4Bxyl }}
+        TRBINANCE_API_KEY: ${{ secrets.TRBINANCE_API_KEY }}
+        TRBINANCE_API_SECRET: ${{ secrets.TRBINANCE_API_SECRET }}
       run: |
         python bot.py
