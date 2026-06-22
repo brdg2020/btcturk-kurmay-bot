@@ -1,5 +1,4 @@
 import os
-import time
 import hmac
 import hashlib
 import requests
@@ -12,7 +11,7 @@ API_SECRET = os.environ.get("TRBINANCE_API_SECRET", "")
 BASE_URL = "https://www.binance.tr"
 MARKET_BASE_URL = "https://api.binance.me"
 
-REQUEST_TIMEOUT = 8
+REQUEST_TIMEOUT = 10
 SYMBOL = "BTCTRY"
 
 def log(msg):
@@ -34,12 +33,10 @@ def get_server_time():
     log(f"1) Status: {r.status_code}")
     log(f"1) Raw response: {r.text[:500]}")
     r.raise_for_status()
-    data = r.json()
-    return data
+    return r.json()
 
 def get_account_info():
     log("2) Hesap bilgisi isteniyor...")
-
     ts_data = get_server_time()
     timestamp = ts_data.get("timestamp")
     if not timestamp:
@@ -55,7 +52,6 @@ def get_account_info():
     headers = {"X-MBX-APIKEY": API_KEY}
 
     log(f"2) Account URL: {url}")
-
     r = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
     log(f"2) Status: {r.status_code}")
     log(f"2) Raw response: {r.text[:1000]}")
@@ -80,7 +76,6 @@ def get_klines():
 
 def main():
     log("DEBUG BOT BAŞLADI")
-
     log(f"API_KEY var mı? {'EVET' if API_KEY else 'HAYIR'}")
     log(f"API_SECRET var mı? {'EVET' if API_SECRET else 'HAYIR'}")
 
