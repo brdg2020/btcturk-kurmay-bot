@@ -1,5 +1,6 @@
 cat > bot.py << 'EOF'
 import os
+import traceback
 import hmac
 import hashlib
 import requests
