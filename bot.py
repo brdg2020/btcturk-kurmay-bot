@@ -318,6 +318,7 @@ def main():
 
     try:
         account = get_account_info()
+        log(f"HAM ACCOUNT JSON: {account}")
         try_balance, btc_balance = parse_balances(account)
 
         log("=== BAKİYE DURUMU ===")
