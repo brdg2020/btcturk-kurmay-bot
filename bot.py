@@ -142,51 +142,41 @@ def rsi(values, period=14):
 # =========================================================
 # BAKİYE OKUMA
 # =========================================================
-def parse_balances(account_json):
-    try:
-        data = account_json.get("data", account_json)
-
-        possible_balance_lists = [
-            data.get("balances"),
-            data.get("balance"),
-            data.get("assets"),
+def parse_balances(account_data):
+    """
+    Binance TR /open/v1/account/spot cevabından TRY ve BTC bakiyesini okur.
+    Beklenen yapı:
+    {
+      "code":0,
+      "msg":"Success",
+      "data":{
+        ...
+        "accountAssets":[
+          {"asset":"TRY","free":"3013.88","locked":"0"},
+          {"asset":"BTC","free":"0.01327","locked":"0"}
         ]
+      }
+    }
+    """
+    try_balance = 0.0
+    btc_balance = 0.0
 
-        balances = None
-        for item in possible_balance_lists:
-            if isinstance(item, list):
-                balances = item
-                break
+    assets = (
+        account_data
+        .get("data", {})
+        .get("accountAssets", [])
+    )
 
-        if balances is None:
-            return 0.0, 0.0
+    for item in assets:
+        asset = item.get("asset", "")
+        free_amount = float(item.get("free", "0") or 0)
 
-        try_btc = 0.0
-        try_try = 0.0
+        if asset == "TRY":
+            try_balance = free_amount
+        elif asset == "BTC":
+            btc_balance = free_amount
 
-        for asset in balances:
-            coin = str(asset.get("asset") or asset.get("coin") or asset.get("currency") or "").upper()
-
-            free_val = (
-                asset.get("free")
-                or asset.get("available")
-                or asset.get("balance")
-                or asset.get("freeAmount")
-                or 0
-            )
-
-            free_val = safe_float(free_val, 0.0)
-
-            if coin == "BTC":
-                try_btc = free_val
-            elif coin == "TRY":
-                try_try = free_val
-
-        return try_try, try_btc
-
-    except Exception as e:
-        log(f"Balance parse hatası: {e}")
-        return 0.0, 0.0
+    return try_balance, btc_balance
 
 # =========================================================
 # STRATEJİ
