@@ -1,7 +1,6 @@
+cat > bot.py << 'EOF'
 import os
-import time
 import hmac
-import math
 import hashlib
 import requests
 from urllib.parse import urlencode
@@ -20,23 +19,20 @@ REQUEST_TIMEOUT = 10
 SYMBOL = "BTCTRY"
 
 # Strateji ayarları
-CORE_BTC_RATIO = 0.70       # BTC'nin %70'i tutulacak ana BTC
-TRADE_BTC_RATIO = 0.30      # BTC'nin %30'u trade tarafı
-BUY_CHUNK_TRY = 1000.0      # tek alımda kullanılacak TRY
-MIN_TRY_TO_BUY = 500.0      # bundan az TRY varsa alım yapma
-MIN_BTC_TO_SELL = 0.00005   # bundan az trade BTC varsa satış yapma
+CORE_BTC_RATIO = 0.70
+TRADE_BTC_RATIO = 0.30
+BUY_CHUNK_TRY = 1000.0
+MIN_TRY_TO_BUY = 500.0
+MIN_BTC_TO_SELL = 0.00005
 
 # Teknik ayarlar
-EMA_FAST_MAIN = 20          # 1h trend EMA hızlı
-EMA_SLOW_MAIN = 50          # 1h trend EMA yavaş
+EMA_FAST_MAIN = 20
+EMA_SLOW_MAIN = 50
 RSI_PERIOD = 14
 
-EMA_FAST_TRIGGER = 9        # 15m tetik EMA hızlı
-EMA_SLOW_TRIGGER = 21       # 15m tetik EMA yavaş
+EMA_FAST_TRIGGER = 9
+EMA_SLOW_TRIGGER = 21
 
-# =========================================================
-# YARDIMCI FONKSİYONLAR
-# =========================================================
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
@@ -81,13 +77,6 @@ def get_account_info():
     r.raise_for_status()
     return r.json()
 
-def get_ticker_price(symbol=SYMBOL):
-    url = f"{MARKET_BASE_URL}/api/v1/ticker/price"
-    params = {"symbol": symbol}
-    r = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
-    r.raise_for_status()
-    return r.json()
-
 def get_klines(symbol=SYMBOL, interval="1h", limit=200):
     url = f"{MARKET_BASE_URL}/api/v1/klines"
     params = {
@@ -103,12 +92,7 @@ def get_klines(symbol=SYMBOL, interval="1h", limit=200):
 # TEKNİK GÖSTERGELER
 # =========================================================
 def extract_closes(klines):
-    closes = []
-    for k in klines:
-        # Kline formatı:
-        # [open_time, open, high, low, close, volume, close_time, ...]
-        closes.append(float(k[4]))
-    return closes
+    return [float(k[4]) for k in klines]
 
 def ema(values, period):
     if len(values) < period:
@@ -159,14 +143,9 @@ def rsi(values, period=14):
 # BAKİYE OKUMA
 # =========================================================
 def parse_balances(account_json):
-    """
-    Binance TR cevap yapısı değişebilir.
-    O yüzden birkaç formatı toleranslı okuyalım.
-    """
     try:
         data = account_json.get("data", account_json)
 
-        # Olası alan isimleri
         possible_balance_lists = [
             data.get("balances"),
             data.get("balance"),
@@ -210,10 +189,9 @@ def parse_balances(account_json):
         return 0.0, 0.0
 
 # =========================================================
-# STRATEJİ MANTIĞI
+# STRATEJİ
 # =========================================================
 def analyze_market():
-    # 1H trend verisi
     klines_1h = get_klines(interval="1h", limit=200)
     closes_1h = extract_closes(klines_1h)
 
@@ -222,7 +200,6 @@ def analyze_market():
     rsi_1h = rsi(closes_1h, RSI_PERIOD)
     last_close_1h = closes_1h[-1]
 
-    # 15m tetik verisi
     klines_15m = get_klines(interval="15m", limit=200)
     closes_15m = extract_closes(klines_15m)
 
@@ -245,11 +222,9 @@ def analyze_market():
 def build_signal(try_balance, btc_balance, market):
     price = market["last_close_15m"]
 
-    # BTC tarafını core/trade diye ayır
     core_btc = btc_balance * CORE_BTC_RATIO
     trade_btc = btc_balance * TRADE_BTC_RATIO
 
-    # Ana trend
     trend_up = (
         market["ema20_1h"] is not None and
         market["ema50_1h"] is not None and
@@ -266,7 +241,6 @@ def build_signal(try_balance, btc_balance, market):
         market["rsi_1h"] < 45
     )
 
-    # 15m tetik
     trigger_buy = (
         market["ema9_15m"] is not None and
         market["ema21_15m"] is not None and
@@ -288,7 +262,6 @@ def build_signal(try_balance, btc_balance, market):
     reason = "Net koşul oluşmadı."
     suggested_action = None
 
-    # AL koşulu
     if trend_up and trigger_buy and try_balance >= MIN_TRY_TO_BUY:
         buy_try = min(BUY_CHUNK_TRY, try_balance)
         buy_btc_est = buy_try / price if price > 0 else 0
@@ -304,9 +277,8 @@ def build_signal(try_balance, btc_balance, market):
             "estimated_btc": round(buy_btc_est, 8)
         }
 
-    # SAT koşulu
     elif trade_btc >= MIN_BTC_TO_SELL and (trend_down or trigger_sell):
-        sell_btc = trade_btc * 0.50   # ilk sürümde trade BTC'nin yarısını satmayı öner
+        sell_btc = trade_btc * 0.50
         sell_try_est = sell_btc * price
 
         decision = "SAT"
@@ -323,7 +295,6 @@ def build_signal(try_balance, btc_balance, market):
             "estimated_try": round(sell_try_est, 2)
         }
 
-    # Durum raporu
     return {
         "decision": decision,
         "reason": reason,
@@ -334,7 +305,7 @@ def build_signal(try_balance, btc_balance, market):
     }
 
 # =========================================================
-# ANA AKIŞ
+# MAIN
 # =========================================================
 def main():
     log("KURMAY SİNYAL BOTU BAŞLADI")
@@ -346,7 +317,6 @@ def main():
         return
 
     try:
-        # 1) Hesap bakiyesi
         account = get_account_info()
         try_balance, btc_balance = parse_balances(account)
 
@@ -354,7 +324,6 @@ def main():
         log(f"TRY Bakiye: {try_balance:.2f}")
         log(f"BTC Bakiye: {btc_balance:.8f}")
 
-        # 2) Teknik analiz
         market = analyze_market()
 
         log("=== TEKNİK DURUM ===")
@@ -363,7 +332,6 @@ def main():
         log(f"15M Kapanış: {market['last_close_15m']:.2f}")
         log(f"15M EMA9: {market['ema9_15m']:.2f} | EMA21: {market['ema21_15m']:.2f} | RSI: {market['rsi_15m']:.2f}")
 
-        # 3) Sinyal üret
         signal = build_signal(try_balance, btc_balance, market)
 
         log("=== STRATEJİ RAPORU ===")
@@ -376,15 +344,9 @@ def main():
         if signal["suggested_action"]:
             action = signal["suggested_action"]
             if action["type"] == "BUY":
-                log(
-                    f"ÖNERİLEN İŞLEM: {action['buy_try']} TRY ile yaklaşık "
-                    f"{action['estimated_btc']} BTC AL"
-                )
+                log(f"ÖNERİLEN İŞLEM: {action['buy_try']} TRY ile yaklaşık {action['estimated_btc']} BTC AL")
             elif action["type"] == "SELL":
-                log(
-                    f"ÖNERİLEN İŞLEM: yaklaşık {action['sell_btc']} BTC SAT "
-                    f"(tahmini {action['estimated_try']} TRY)"
-                )
+                log(f"ÖNERİLEN İŞLEM: yaklaşık {action['sell_btc']} BTC SAT (tahmini {action['estimated_try']} TRY)")
         else:
             log("ÖNERİLEN İŞLEM: YOK")
 
@@ -395,3 +357,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+EOF
