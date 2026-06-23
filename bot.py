@@ -345,8 +345,8 @@ def main():
         log("BOT BİTTİ - BU SÜRÜM GERÇEK EMİR VERMEZ")
 
     except Exception as e:
-    log(f"GENEL HATA: {e}")
-    traceback.print_exc()
+        log(f"GENEL HATA: {e}")
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main()
