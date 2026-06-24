@@ -3,49 +3,45 @@ import time
 import hmac
 import hashlib
 import requests
+import pandas as pd
 from urllib.parse import urlencode
 from datetime import datetime
 
-# =========================================================
-# AYARLAR
-# =========================================================
-API_KEY = os.environ.get("TRBINANCE_API_KEY", "").strip()
-API_SECRET = os.environ.get("TRBINANCE_API_SECRET", "").strip()
+# Zeka ve İndikatörleri Çekiyoruz
+from indicators import ema, rsi, bollinger_bands, macd, atr, obv
+from strategy import generate_signal
 
+# =========================================================
+# GİZLİ AYARLAR VE ANAHTARLAR (BURAYI DOLDUR)
+# =========================================================
+API_KEY = "BINANCE_TR_API_KEY_BURAYA"
+API_SECRET = "BINANCE_TR_SECRET_KEY_BURAYA"
+
+# =========================================================
+# SABİTLER
+# =========================================================
 BASE_URL = "https://www.binance.tr"
 MARKET_BASE_URL = "https://api.binance.me"
-
 REQUEST_TIMEOUT = 15
 SYMBOL = "BTCTRY"
 
-# Strateji ayarları
-CORE_BTC_RATIO = 0.70   # eldeki BTC'nin %70'i "core", dokunma
-TRADE_BTC_RATIO = 0.30  # eldeki BTC'nin %30'u trade tarafı
-BUY_CHUNK_TRY = 1000.0  # alım sinyalinde önerilecek TRY tutarı
+# Core / Trade Ayrımı
+CORE_BTC_RATIO = 0.70
+TRADE_BTC_RATIO = 0.30
 
 # =========================================================
-# YARDIMCI
+# YARDIMCI FONKSİYON
 # =========================================================
 def log(msg):
-    now = datetime.now().strftime("%H:%M:%S")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{now}] {msg}")
 
-def safe_float(x, default=0.0):
-    try:
-        return float(x)
-    except Exception:
-        return default
-
 # =========================================================
-# İMZA / API
+# BINANCE TR API KÖPRÜSÜ
 # =========================================================
 def sign_query(params: dict) -> str:
     query = urlencode(params)
-    signature = hmac.new(
-        API_SECRET.encode("utf-8"),
-        query.encode("utf-8"),
-        hashlib.sha256
-    ).hexdigest()
+    signature = hmac.new(API_SECRET.encode("utf-8"), query.encode("utf-8"), hashlib.sha256).hexdigest()
     return f"{query}&signature={signature}"
 
 def get_server_time():
@@ -54,406 +50,148 @@ def get_server_time():
     r.raise_for_status()
     return r.json()
 
-def signed_get(path: str, params=None):
-    if params is None:
-        params = {}
-
-    server = get_server_time()
-    if server.get("code") != 0:
-        raise Exception(f"Sunucu zamanı alınamadı: {server}")
-
-    timestamp = server.get("timestamp")
+def signed_request(method, path: str, params=None):
+    if params is None: params = {}
+    timestamp = get_server_time().get("timestamp")
     params["timestamp"] = timestamp
-
     query_with_sig = sign_query(params)
-    url = f"{BASE_URL}{path}?{query_with_sig}"
-
-    headers = {
-        "X-MBX-APIKEY": API_KEY
-    }
-
-    r = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+    
+    url = f"{BASE_URL}{path}"
+    headers = {"X-MBX-APIKEY": API_KEY}
+    
+    if method == "GET":
+        url += f"?{query_with_sig}"
+        r = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+    elif method == "POST":
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+        r = requests.post(url, headers=headers, data=query_with_sig, timeout=REQUEST_TIMEOUT)
+        
     r.raise_for_status()
     return r.json()
 
-def get_account_info():
-    # Binance TR spot hesap endpoint'i
-    return signed_get("/open/v1/account/spot")
-
-# =========================================================
-# MARKET DATA
-# =========================================================
-def get_klines(symbol=SYMBOL, interval="15m", limit=200):
-    url = f"{MARKET_BASE_URL}/api/v1/klines"
-    params = {
-        "symbol": symbol,
-        "interval": interval,
-        "limit": limit
-    }
-    r = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
-    r.raise_for_status()
-    data = r.json()
-
-    if not isinstance(data, list) or len(data) == 0:
-        raise Exception(f"Kline verisi alınamadı: {data}")
-
-    return data
-
-def extract_closes(klines):
-    closes = []
-    for k in klines:
-        # Binance kline formatında kapanış fiyatı index 4
-        closes.append(float(k[4]))
-    return closes
-
-# =========================================================
-# TEKNİK İNDİKATÖRLER
-# =========================================================
-def ema(values, period):
-    if len(values) < period:
-        return None
-
-    k = 2 / (period + 1)
-    ema_val = sum(values[:period]) / period
-
-    for price in values[period:]:
-        ema_val = price * k + ema_val * (1 - k)
-
-    return ema_val
-
-def rsi(values, period=14):
-    if len(values) < period + 1:
-        return None
-
-    gains = []
-    losses = []
-
-    for i in range(1, period + 1):
-        diff = values[i] - values[i - 1]
-        if diff >= 0:
-            gains.append(diff)
-            losses.append(0)
-        else:
-            gains.append(0)
-            losses.append(abs(diff))
-
-    avg_gain = sum(gains) / period
-    avg_loss = sum(losses) / period
-
-    for i in range(period + 1, len(values)):
-        diff = values[i] - values[i - 1]
-        gain = max(diff, 0)
-        loss = max(-diff, 0)
-
-        avg_gain = ((avg_gain * (period - 1)) + gain) / period
-        avg_loss = ((avg_loss * (period - 1)) + loss) / period
-
-    if avg_loss == 0:
-        return 100.0
-
-    rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
-
-# =========================================================
-# ANALİZ
-# =========================================================
-def analyze_market():
-    # 1H veri
-    klines_1h = get_klines(interval="1h", limit=200)
-    closes_1h = extract_closes(klines_1h)
-
-    # 15M veri
-    klines_15m = get_klines(interval="15m", limit=200)
-    closes_15m = extract_closes(klines_15m)
-
-    # Son fiyat
-    current_price = closes_15m[-1]
-
-    # 1H indikatörleri
-    ema20_1h = ema(closes_1h, 20)
-    ema50_1h = ema(closes_1h, 50)
-    rsi_1h = rsi(closes_1h, 14)
-
-    # 15M indikatörleri
-    ema9_15m = ema(closes_15m, 9)
-    ema21_15m = ema(closes_15m, 21)
-    rsi_15m = rsi(closes_15m, 14)
-
-    if None in [ema20_1h, ema50_1h, rsi_1h, ema9_15m, ema21_15m, rsi_15m]:
-        raise Exception("Teknik indikatörlerden biri hesaplanamadı.")
-
-    return {
-        "price": current_price,
-        "close_1h": closes_1h[-1],
-        "ema20_1h": ema20_1h,
-        "ema50_1h": ema50_1h,
-        "rsi_1h": rsi_1h,
-        "close_15m": closes_15m[-1],
-        "ema9_15m": ema9_15m,
-        "ema21_15m": ema21_15m,
-        "rsi_15m": rsi_15m,
-    }
-
-# =========================================================
-# BAKİYE
-# =========================================================
-def parse_balances(account_data):
-    """
-    account_data:
-    {
-      "code":0,
-      "msg":"Success",
-      "data":{
-         ...
-         "accountAssets":[
-             {"asset":"TRY","free":"3013.88","locked":"0"},
-             {"asset":"BTC","free":"0.01327","locked":"0"},
-             ...
-         ]
-      }
-    }
-    """
-    result = {
-        "TRY": {"free": 0.0, "locked": 0.0},
-        "BTC": {"free": 0.0, "locked": 0.0},
-    }
-
-    if not account_data or account_data.get("code") != 0:
-        return result
-
-    data = account_data.get("data", {})
-    assets = data.get("accountAssets", [])
-
+def get_account_balances():
+    res = signed_request("GET", "/open/v1/account/spot")
+    assets = res.get("data", {}).get("accountAssets", [])
+    result = {"TRY": 0.0, "BTC": 0.0}
     for asset in assets:
         coin = asset.get("asset")
         if coin in result:
-            result[coin]["free"] = safe_float(asset.get("free", 0))
-            result[coin]["locked"] = safe_float(asset.get("locked", 0))
-
+            result[coin] = float(asset.get("free", 0))
     return result
 
+def place_market_order(side, amount):
+    params = {"symbol": SYMBOL, "side": side, "type": "MARKET"}
+    if side == "BUY":
+        params["quoteOrderQty"] = round(amount, 2)  # TRY bazlı harcama
+    else:
+        params["quantity"] = round(amount, 5)       # BTC bazlı satım
+        
+    return signed_request("POST", "/open/v1/orders", params)
+
+def get_klines(interval, limit):
+    url = f"{MARKET_BASE_URL}/api/v1/klines"
+    params = {"symbol": SYMBOL, "interval": interval, "limit": limit}
+    r = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
 # =========================================================
-# STRATEJİ
+# CANLI VERİ VE İNDİKATÖR İŞLEME (Saha Ajanı)
 # =========================================================
-def generate_signal(market, balances):
-    """
-    Çıktı:
-    {
-      "decision": "BUY" / "SELL" / "HOLD",
-      "reason": "...",
-      "core_btc": ...,
-      "trade_btc": ...,
-      "suggested_action": {...} or None
+def fetch_and_analyze():
+    klines_1h = get_klines("1h", 500)
+    klines_15m = get_klines("15m", 200)
+
+    cols = ["Open_Time", "Open", "High", "Low", "Close", "Volume", "Close_Time", "QAV", "Trades", "TBB", "TBQ", "Ignore"]
+    df_1h = pd.DataFrame(klines_1h, columns=cols)
+    df_15m = pd.DataFrame(klines_15m, columns=cols)
+
+    for df in (df_1h, df_15m):
+        for col in ["Open", "High", "Low", "Close", "Volume"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # İndikatör Hesaplamaları
+    df_1h["ema200"] = ema(df_1h["Close"], 200)
+    df_1h["rsi"] = rsi(df_1h["Close"], 14)
+    _, _, df_1h["macd_hist"] = macd(df_1h["Close"])
+
+    df_15m["ema21"] = ema(df_15m["Close"], 21)
+    df_15m["rsi"] = rsi(df_15m["Close"], 14)
+    sma, upper, lower = bollinger_bands(df_15m["Close"], 20, 2.0)
+    df_15m["bb_upper"], df_15m["bb_lower"] = upper, lower
+    df_15m["atr"] = atr(df_15m["High"], df_15m["Low"], df_15m["Close"], 14)
+    df_15m["obv"] = obv(df_15m["Close"], df_15m["Volume"])
+    df_15m["obv_ema"] = ema(df_15m["obv"], 21)
+
+    row_1h = {
+        "Close_1h": float(df_1h["Close"].iloc[-1]),
+        "ema200": float(df_1h["ema200"].iloc[-1]),
+        "rsi_1h": float(df_1h["rsi"].iloc[-1]),
+        "macd_hist": float(df_1h["macd_hist"].iloc[-1]),
     }
-    """
-    price = market["price"]
-
-    btc_total = balances["BTC"]["free"]
-    try_balance = balances["TRY"]["free"]
-
-    core_btc = btc_total * CORE_BTC_RATIO
-    trade_btc = btc_total * TRADE_BTC_RATIO
-
-    # Trend filtresi (1H)
-    bullish_trend = market["ema20_1h"] > market["ema50_1h"]
-    bearish_trend = market["ema20_1h"] < market["ema50_1h"]
-
-    # Kısa vade momentum (15M)
-    short_bull = market["ema9_15m"] > market["ema21_15m"]
-    short_bear = market["ema9_15m"] < market["ema21_15m"]
-
-    rsi_1h = market["rsi_1h"]
-    rsi_15m = market["rsi_15m"]
-
-    # -----------------------------
-    # AL KOŞULU
-    # -----------------------------
-    # Daha çok "dipten toplama" mantığı:
-    # - 1H RSI zayıf / aşırı satıma yakın
-    # - 15M RSI çok şişik değil
-    # - TRY bakiyesi yeterli
-    buy_signal = (
-        try_balance >= BUY_CHUNK_TRY and
-        (
-            (rsi_1h < 32 and rsi_15m < 45) or
-            (bullish_trend and short_bull and rsi_15m < 55 and rsi_1h < 50)
-        )
-    )
-
-    # -----------------------------
-    # SAT KOŞULU
-    # -----------------------------
-    # Sadece trade BTC tarafı için öneri üretir
-    sell_signal = (
-        trade_btc > 0.00001 and
-        (
-            (rsi_1h > 68 and rsi_15m > 65) or
-            (bearish_trend and short_bear and rsi_15m > 55)
-        )
-    )
-
-    # Çakışma olursa HOLD
-    if buy_signal and sell_signal:
-        return {
-            "decision": "HOLD",
-            "reason": "Hem al hem sat koşulu aynı anda oluştu; çakışma nedeniyle bekle.",
-            "core_btc": core_btc,
-            "trade_btc": trade_btc,
-            "suggested_action": None
-        }
-
-    if buy_signal:
-        buy_try = min(BUY_CHUNK_TRY, try_balance)
-        est_btc = buy_try / price if price > 0 else 0.0
-
-        if buy_try < 50:
-            return {
-                "decision": "HOLD",
-                "reason": "Al sinyali var ama kullanılabilir TRY çok düşük.",
-                "core_btc": core_btc,
-                "trade_btc": trade_btc,
-                "suggested_action": None
-            }
-
-        reason_parts = []
-        if rsi_1h < 32:
-            reason_parts.append("1H RSI düşük")
-        if bullish_trend:
-            reason_parts.append("1H trend toparlanıyor")
-        if short_bull:
-            reason_parts.append("15M momentum yukarı dönüyor")
-
-        reason = ", ".join(reason_parts) if reason_parts else "Al koşulları oluştu."
-
-        return {
-            "decision": "BUY",
-            "reason": reason,
-            "core_btc": core_btc,
-            "trade_btc": trade_btc,
-            "suggested_action": {
-                "type": "BUY",
-                "buy_try": round(buy_try, 2),
-                "est_btc": round(est_btc, 8)
-            }
-        }
-
-    if sell_signal:
-        # Trade BTC'nin tamamını değil, %50'sini sat önerelim
-        sell_btc = trade_btc * 0.50
-        if sell_btc < 0.00001:
-            return {
-                "decision": "HOLD",
-                "reason": "Sat sinyali var ama trade BTC çok küçük.",
-                "core_btc": core_btc,
-                "trade_btc": trade_btc,
-                "suggested_action": None
-            }
-
-        est_try = sell_btc * price
-
-        reason_parts = []
-        if rsi_1h > 68:
-            reason_parts.append("1H RSI yüksek")
-        if bearish_trend:
-            reason_parts.append("1H trend zayıf")
-        if short_bear:
-            reason_parts.append("15M momentum aşağı dönüyor")
-
-        reason = ", ".join(reason_parts) if reason_parts else "Sat koşulları oluştu."
-
-        return {
-            "decision": "SELL",
-            "reason": reason,
-            "core_btc": core_btc,
-            "trade_btc": trade_btc,
-            "suggested_action": {
-                "type": "SELL",
-                "sell_btc": round(sell_btc, 8),
-                "est_try": round(est_try, 2)
-            }
-        }
-
-    return {
-        "decision": "HOLD",
-        "reason": "Net koşul oluşmadı.",
-        "core_btc": core_btc,
-        "trade_btc": trade_btc,
-        "suggested_action": None
+    
+    row_15m = {
+        "Close": float(df_15m["Close"].iloc[-1]),
+        "ema21": float(df_15m["ema21"].iloc[-1]),
+        "rsi": float(df_15m["rsi"].iloc[-1]),
+        "bb_upper": float(df_15m["bb_upper"].iloc[-1]),
+        "bb_lower": float(df_15m["bb_lower"].iloc[-1]),
+        "atr": float(df_15m["atr"].iloc[-1]),
+        "obv": float(df_15m["obv"].iloc[-1]),
+        "obv_ema": float(df_15m["obv_ema"].iloc[-1]),
     }
+    return row_15m, row_1h
 
 # =========================================================
-# MAIN
+# ANA DÖNGÜ (7/24 Nöbet)
 # =========================================================
-def main():
-    log("KURMAY SİNYAL BOTU BAŞLADI")
-    log(f"API_KEY var mı? {'EVET' if API_KEY else 'HAYIR'}")
-    log(f"API_SECRET var mı? {'EVET' if API_SECRET else 'HAYIR'}")
-
-    if not API_KEY or not API_SECRET:
-        log("HATA: API bilgileri environment'ta yok.")
-        return
-
+def run_bot_cycle():
     try:
-        # 1) Hesap bilgisi
-        account = get_account_info()
-        balances = parse_balances(account)
+        log("Saha taraması başlatıldı...")
+        balances = get_account_balances()
+        try_bal, btc_bal = balances["TRY"], balances["BTC"]
+        
+        core_btc = btc_bal * CORE_BTC_RATIO
+        trade_btc = btc_bal * TRADE_BTC_RATIO
 
-        try_balance = balances["TRY"]["free"]
-        btc_balance = balances["BTC"]["free"]
+        row_15m, row_1h = fetch_and_analyze()
+        
+        signal = generate_signal(row_15m, row_1h, try_bal, trade_btc)
 
-        log("=== BAKİYE DURUMU ===")
-        log(f"TRY Bakiye: {try_balance:.2f}")
-        log(f"BTC Bakiye: {btc_balance:.8f}")
+        if signal["action"] == "BUY" and signal["amount_try"] > 50:
+            harcanacak_try = signal["amount_try"]
+            log(f"🟢 ALIM KARARI | Sebep: {signal['reason']} | Fiyat: {row_15m['Close']} | Tutar: {harcanacak_try:.2f} TRY")
+            
+            res = place_market_order("BUY", harcanacak_try)
+            log(f"✅ ALIM BAŞARILI | Gerçekleşen: {res.get('data', {}).get('cummulativeQuoteQty')} TRY")
 
-        # 2) Teknik analiz
-        market = analyze_market()
+        elif signal["action"] == "SELL" and signal["amount_btc"] > 0.00001:
+            satilacak_btc = signal["amount_btc"]
+            log(f"🔴 SATIŞ KARARI | Sebep: {signal['reason']} | Fiyat: {row_15m['Close']} | Miktar: {satilacak_btc:.5f} BTC")
+            
+            res = place_market_order("SELL", satilacak_btc)
+            log(f"✅ SATIŞ BAŞARILI | Elde Edilen: {res.get('data', {}).get('cummulativeQuoteQty')} TRY")
 
-        log("=== TEKNİK DURUM ===")
-        log(f"1H Kapanış: {market['close_1h']:.2f}")
-        log(
-            f"1H EMA20: {market['ema20_1h']:.2f} | "
-            f"EMA50: {market['ema50_1h']:.2f} | "
-            f"RSI: {market['rsi_1h']:.2f}"
-        )
-        log(f"15M Kapanış: {market['close_15m']:.2f}")
-        log(
-            f"15M EMA9: {market['ema9_15m']:.2f} | "
-            f"EMA21: {market['ema21_15m']:.2f} | "
-            f"RSI: {market['rsi_15m']:.2f}"
-        )
-
-        # 3) Strateji
-        signal = generate_signal(market, balances)
-
-        log("=== STRATEJİ RAPORU ===")
-        log(f"Fiyat: {market['price']:.2f}")
-        log(f"Core BTC (dokunma): {signal['core_btc']:.8f}")
-        log(f"Trade BTC (işlem tarafı): {signal['trade_btc']:.8f}")
-        log(f"KARAR: {signal['decision']}")
-        log(f"GEREKÇE: {signal['reason']}")
-
-        if signal["suggested_action"]:
-            action = signal["suggested_action"]
-
-            if action["type"] == "BUY":
-                log(
-                    f"ÖNERİLEN İŞLEM: {action['buy_try']:.2f} TRY ile "
-                    f"yaklaşık {action['est_btc']:.8f} BTC AL"
-                )
-
-            elif action["type"] == "SELL":
-                log(
-                    f"ÖNERİLEN İŞLEM: yaklaşık {action['sell_btc']:.8f} BTC SAT "
-                    f"(tahmini {action['est_try']:.2f} TRY)"
-                )
         else:
-            log("ÖNERİLEN İŞLEM: YOK")
-
-        log("BOT BİTTİ - BU SÜRÜM GERÇEK EMİR VERMEZ")
+            log(f"Karar: HOLD (Bekle). Güncel Fiyat: {row_15m['Close']}")
 
     except Exception as e:
-        log(f"GENEL HATA: {e}")
-        raise
+        log(f"⚠️ BOT HATASI: {e}")
+
+def sleep_until_next_15m():
+    now = datetime.now()
+    minutes = 15 - (now.minute % 15)
+    seconds = 60 - now.second
+    sleep_time = (minutes - 1) * 60 + seconds
+    
+    sleep_time += 5 # Mumun borsada tamamen kapanması için fazladan 5 saniye tolerans
+    
+    next_run = datetime.fromtimestamp(time.time() + sleep_time).strftime("%H:%M:%S")
+    log(f"Bir sonraki operasyon saati: {next_run} (Uykuya geçiliyor...)\n")
+    time.sleep(sleep_time)
 
 if __name__ == "__main__":
-    main()
+    log("🚀 KURMAY V3 SNIPER BOT CANLIYA ALINDI! Sunucu 7/24 nöbete başladı.\n")
+    while True:
+        run_bot_cycle()
+        sleep_until_next_15m()
