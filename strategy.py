@@ -1,110 +1,72 @@
-
 # strategy.py
 
-from config import (
-    BUY_CHUNK_TRY,
-    SELL_PORTION,
-    RSI_1H_BUY_MAX,
-    RSI_1H_SELL_MIN,
-    RSI_15M_BUY_MAX,
-    RSI_15M_SELL_MIN,
-    USE_EMA_FILTER,
-)
-
-
 def generate_signal(row_15m, row_1h, trade_try, trade_btc):
-    """
-    Dönüş formatı:
-    {
-        "action": "BUY" / "SELL" / "HOLD",
-        "reason": "...",
-        "amount_try": float,
-        "amount_btc": float
-    }
-    """
-
     price = row_15m["Close"]
-
-    # 1H göstergeler
-    ema20_1h = row_1h["ema20"]
-    ema50_1h = row_1h["ema50"]
-    rsi_1h = row_1h["rsi"]
-
-    # 15M göstergeler
-    ema9_15m = row_15m["ema9"]
-    ema21_15m = row_15m["ema21"]
+    
+    # 1 Saatlik Büyük Resim (Rejim Belirleyici)
+    ema200_1h = row_1h.get("ema200", price)
+    rsi_1h = row_1h["rsi_1h"]
+    is_bull_market = row_1h["Close_1h"] > ema200_1h
+    
+    # 15 Dakikalık Saha Ajanı (Tetikleyici)
     rsi_15m = row_15m["rsi"]
-
-    # -------------------------------------------------
-    # BUY KOŞULU
-    # -------------------------------------------------
-    # Mantık:
-    # - 1H tarafı çok sıcak değil, zayıf / dip bölgesinde
-    # - 15M RSI düşük
-    # - 15M kısa EMA toparlanıyor / yukarı tarafta
-    # - elde trade TRY var
+    bb_lower = row_15m["bb_lower"]
+    bb_upper = row_15m["bb_upper"]
+    
     buy_ok = False
-
-    if trade_try >= 50:  # saçma derecede küçük alımı engelle
-        cond_1h = rsi_1h <= RSI_1H_BUY_MAX
-        cond_15m = rsi_15m <= RSI_15M_BUY_MAX
-
-        if USE_EMA_FILTER:
-            cond_ema = ema9_15m >= ema21_15m * 0.997
+    
+    # -------------------------------------------------
+    # BUY KOŞULU (Dinamik DCA)
+    # -------------------------------------------------
+    if trade_try > 50:
+        if is_bull_market:
+            # Boğada fırsat kaçırma, alt banda değdiğinde veya RSI soğuduğunda al
+            if (price <= bb_lower * 1.001) or (rsi_15m < 33 and rsi_1h < 55):
+                buy_ok = True
         else:
-            cond_ema = True
-
-        # 1H trend çok bozuksa frene basalım:
-        # fiyat EMA50'nin çok altında ve EMA20 < EMA50 ise daha seçici ol
-        # burada row_1h["Close"] kullanıyoruz
-        close_1h = row_1h["Close"]
-        disaster_trend = (close_1h < ema50_1h * 0.94) and (ema20_1h < ema50_1h)
-
-        if cond_1h and cond_15m and cond_ema and not disaster_trend:
-            buy_ok = True
-
+            # Ayıda mızmız ol, aşırı kanama bekle
+            if (price <= bb_lower * 0.998) and (rsi_15m < 25):
+                buy_ok = True
+                
     if buy_ok:
-        amount_try = min(BUY_CHUNK_TRY, trade_try)
+        amount_try = trade_try * 0.35 # Kasanın %35'i ile kademeli gir
         return {
             "action": "BUY",
-            "reason": "1H zayıf bölge + 15M dip/toparlanma",
+            "reason": "Rejim Bazlı Dinamik Alım",
             "amount_try": amount_try,
             "amount_btc": 0.0
         }
-
+        
     # -------------------------------------------------
     # SELL KOŞULU
     # -------------------------------------------------
-    # Mantık:
-    # - 1H artık güçlenmiş / sıcak bölge
-    # - 15M de şişmiş
-    # - trade BTC var
     sell_ok = False
-
-    if trade_btc > 0.00001:
-        cond_1h = rsi_1h >= RSI_1H_SELL_MIN
-        cond_15m = rsi_15m >= RSI_15M_SELL_MIN
-
-        if USE_EMA_FILTER:
-            cond_ema = ema9_15m <= ema21_15m * 1.003
+    sell_ratio = 0.0
+    
+    if trade_btc > 0.000001:
+        if is_bull_market:
+            # Boğada malın hepsini satma, coşkuda %30 kâr al
+            if (price >= bb_upper * 0.998) and (rsi_15m > 68):
+                sell_ok = True
+                sell_ratio = 0.30
         else:
-            cond_ema = True
-
-        if cond_1h and cond_15m and cond_ema:
-            sell_ok = True
-
+            # Ayıda dirençte acımasızca sat (%60'ını boşalt)
+            if (rsi_15m > 62) or (price >= bb_upper * 0.999):
+                sell_ok = True
+                sell_ratio = 0.60
+                
     if sell_ok:
-        amount_btc = trade_btc * SELL_PORTION
+        amount_btc = trade_btc * sell_ratio
         return {
             "action": "SELL",
-            "reason": "1H güçlü bölge + 15M aşırı ısınma",
+            "reason": "Rejim Bazlı Dinamik Satış",
             "amount_try": 0.0,
             "amount_btc": amount_btc
         }
-
+        
     return {
         "action": "HOLD",
-        "reason": "Koşul yok",
+        "reason": "-",
         "amount_try": 0.0,
         "amount_btc": 0.0
     }
