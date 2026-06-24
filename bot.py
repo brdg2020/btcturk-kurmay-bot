@@ -14,8 +14,8 @@ from strategy import generate_signal
 # =========================================================
 # GİZLİ AYARLAR VE ANAHTARLAR (BURAYI DOLDUR)
 # =========================================================
-API_KEY = "BINANCE_TR_API_KEY_BURAYA"
-API_SECRET = "BINANCE_TR_SECRET_KEY_BURAYA"
+API_KEY = "B1e66EC4268E0fB9F6348CeE65F05a2aA2d47oTJCE3kt6R6j0V8zu7mHfypHBUO"
+API_SECRET = "085799bA70d34Fbb7A044b0dF78FD5D33W3JdtQQzzdaUaQbPfGriwAieH9OwbCV"
 
 # =========================================================
 # SABİTLER
